@@ -3560,7 +3560,12 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
         if rC is None:
             continue
         # the indexed table load
-        lwzx = next((w for w in reversed(win) if w.mnemonic == 'lwzx'), None)
+        # `lwax` is the sign-extending form of the same load; offset tables are
+        # decoded as signed below either way. Missing it (WipEout HD
+        # func_004D52DC, a 10-case switch) lifted the bctr as a tail call, so
+        # the case ran and control left the function with its 0xCC0-byte frame
+        # still pushed -- every caller then restored r2 from a random slot.
+        lwzx = next((w for w in reversed(win) if w.mnemonic in ('lwzx', 'lwax')), None)
         # 64-bit offset-table idiom emits `sldi rIdx,idx,2; add rT,rIdx,rBase;
         # lwz rEnt,0(rT)` instead of `lwzx rEnt,rIdx,rBase` (gcc -O2 PPC64).
         # Synthesize the equivalent lwzx operands (rEnt,rA,rB) so the base/offset

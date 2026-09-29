@@ -42,6 +42,7 @@ TOC = 0x100000
 def w_cmplwi(bf, ra, ui):  return (10 << 26) | (bf << 23) | (ra << 16) | (ui & 0xFFFF)
 def w_lwz(rt, ra, d):      return (32 << 26) | (rt << 21) | (ra << 16) | (d & 0xFFFF)
 def w_lwzx(rt, ra, rb):    return (31 << 26) | (rt << 21) | (ra << 16) | (rb << 11) | (23 << 1)
+def w_lwax(rt, ra, rb):    return (31 << 26) | (rt << 21) | (ra << 16) | (rb << 11) | (341 << 1)
 def w_add(rt, ra, rb):     return (31 << 26) | (rt << 21) | (ra << 16) | (rb << 11) | (266 << 1)
 def w_slwi(ra, rs, n):     return (21 << 26) | (rs << 21) | (ra << 16) | (n << 11) | (0 << 6) | ((31 - n) << 1)
 def w_bctr():              return (19 << 26) | (20 << 21) | (528 << 1)
@@ -126,6 +127,19 @@ def test_offset_idiom():
     got = discover([w_cmplwi(0, 3, 2), w_lwz(11, 2, 16), w_slwi(9, 3, 2),
                     w_lwzx(0, 9, 11), w_add(0, 0, 11), w_mtctr(0), w_bctr()], mem)
     check("offset table, gcc idiom", got, [0x11100, 0x11200, 0x11300])
+
+
+def test_offset_idiom_lwax():
+    """The same offset idiom with the sign-extending `lwax` (WipEout HD
+    func_004D52DC). Unmatched, the bctr lifted as a tail call and the function
+    left with its frame still pushed."""
+    table = 0x11000
+    mem = {TOC + 16: table,
+           table + 0: 0x100, table + 4: 0x200, table + 8: 0x300,
+           table + 12: 0xFFFFFFFF}
+    got = discover([w_cmplwi(0, 3, 2), w_lwz(11, 2, 16), w_slwi(9, 3, 2),
+                    w_lwax(0, 9, 11), w_add(0, 0, 11), w_mtctr(0), w_bctr()], mem)
+    check("offset table, lwax", got, [0x11100, 0x11200, 0x11300])
 
 
 def test_offset_both_operands_r2_loaded():
@@ -220,6 +234,7 @@ def main() -> int:
     test_encodings()
     test_absolute_base_is_second_operand()
     test_offset_idiom()
+    test_offset_idiom_lwax()
     test_offset_both_operands_r2_loaded()
     test_tie_keeps_first_candidate()
     test_two_level_base_past_early_return()
