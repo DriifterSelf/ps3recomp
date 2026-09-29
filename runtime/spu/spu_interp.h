@@ -35,6 +35,11 @@ uint32_t spu_interp_run(spu_context* ctx, uint32_t start_lsa);
 /* As spu_interp_run, but also hands back at stop_lsa (0 = no such point): the
  * return point of the drain the caller goes back to (spu_smc_microstep). */
 uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa);
+/* As spu_interp_run_until, but interprets lifted code too: hands back ONLY at
+ * stop_lsa (or a stop). For a call from lifted code into runtime-loaded code
+ * whose callbacks re-enter lifted functions -- handing those back mid-call puts
+ * their returns on the wrong host frame. stop_lsa must be nonzero. */
+uint32_t spu_interp_run_to(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa);
 
 /* The single dispatch point every computed branch routes through. If `target`
  * is a registered lifted entry, runs it; otherwise interprets from `target`.
