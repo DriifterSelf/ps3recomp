@@ -2318,7 +2318,21 @@ void spu_indirect_branch(spu_context* ctx)
               if (_n++ < 8)
                   fprintf(stderr, "[spu] img=%d interpreting unlifted LS 0x%05X "
                           "(runtime-loaded code)\n", ctx->image_id, p);
-              spu_interp_run(ctx, p);
+              /* Run the plugin to THIS call's return point -- the link
+               * register, i.e. the bisl that got us here -- interpreting
+               * through lifted code on the way. WipEout HD's MultiStream calls
+               * runtime-loaded DSP plugins that call back into the core:
+               *  - a plain run handed back at the first lifted entry (a core
+               *    callback, or the caller's own start 0x3CC0); the drain ran
+               *    it nested while the real frame waited, one level deeper per
+               *    DSP call, until the mixer fell out;
+               *  - ctx->drain_ret_pc is NOT this call's return: the lifted
+               *    bisl branches before its own spu_drain_call sets it, so it
+               *    still names the OUTER call (0x1041C) and the run skipped
+               *    the frame waiting at 0x3990. */
+              const uint32_t ret = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
+              if (ret) spu_interp_run_to(ctx, p, ret);
+              else     spu_interp_run(ctx, p);
               return;
           } }
         spu_halt(ctx);
