@@ -466,6 +466,10 @@ def _last_line_is_terminator(body_lines: list[str]) -> bool:
         if s.endswith(":"):
             continue
         t = s.rstrip(";")
+        # A conditional branch (`if (...) goto loc_X;`, bdnz, a guarded tail
+        # call) falls through when not taken, so it is never a terminator.
+        if t.startswith("if"):
+            return False
         return (t.startswith("return") or "goto " in t or
                 t.startswith("func_") or t.startswith("lv2_syscall") or
                 "{ func_" in t or t.startswith("{ g_trampoline_fn"))
@@ -3707,6 +3711,7 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
             continue
         toc_candidates = toc if isinstance(toc, (list, tuple)) else [toc]
         best = []
+        best_key = (0, 0)
         for r_base, disp, base_is_ld, disp2, disp2_is_ld in _bases:
             # offset table iff an `add rC, *, r_base` combines the loaded value + base
             is_offset = any(
@@ -3827,8 +3832,15 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
                         # into unrelated data.
                         break
                 _dbg(all_insns[i].addr, f"decoded {len(targets)} targets")
-                if len(targets) > len(best):
-                    best = targets
+                # Rank by targets NEAR the bctr first: case blocks belong to the
+                # dispatcher's own function. A wrong TOC can decode a bogus
+                # table with more "valid" in-text targets megabytes away (MAG
+                # func 0xBB32A0: the main TOC read 7 garbage cases at 0x31398
+                # and beat the real 5-entry inline table right after the bctr).
+                _here = all_insns[i].addr
+                _key = (sum(1 for t in targets if abs(t - _here) < 0x40000), len(targets))
+                if _key > best_key:
+                    best, best_key = targets, _key
         if best:
             tables[all_insns[i].addr] = sorted(set(best))
     return tables
