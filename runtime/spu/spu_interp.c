@@ -259,7 +259,26 @@ static int spu_step(spu_context* ctx) {
     case SPU_mpys:  DST = spu_mpys(A,B); break;
     case SPU_mpyhh: DST = spu_mpyhh(A,B); break;
     case SPU_mpyhhu:DST = spu_mpyhhu(A,B); break;
-    case SPU_mpyhha:DSTC = spu_mpyhha(A,B,T); break;  /* RRR */
+    /* RR accumulate forms: rt is both an input and the destination. (mpyhha
+     * wrote DSTC, i.e. bits 21-27 -- opcode bits in an RR encoding.) */
+    case SPU_mpyhha: DST = spu_mpyhha(A,B,T); break;
+    case SPU_mpyhhau:DST = spu_mpyhhau(A,B,T); break;
+    case SPU_bgx:    DST = spu_bgx(A,B,T); break;
+    case SPU_dfma:   DST = spu_dfma(A,B,T); break;
+    case SPU_dfms:   DST = spu_dfms(A,B,T); break;
+    case SPU_dfnma:  DST = spu_dfnma(A,B,T); break;
+    case SPU_dfnms:  DST = spu_dfnms(A,B,T); break;
+    case SPU_dfa:    DST = spu_dfa(A,B); break;
+    case SPU_dfs:    DST = spu_dfs(A,B); break;
+    case SPU_dfm:    DST = spu_dfm(A,B); break;
+    case SPU_dfceq:  DST = spu_dfceq(A,B); break;
+    case SPU_dfcgt:  DST = spu_dfcgt(A,B); break;
+    case SPU_dfcmeq: DST = spu_dfcmeq(A,B); break;
+    case SPU_dfcmgt: DST = spu_dfcmgt(A,B); break;
+    case SPU_dftsv:  DST = spu_dftsv(A,I); break;
+    case SPU_mpyui:  DST = spu_mpyui(A,I); break;
+    case SPU_rothmi: DST = spu_rothmi(A,I); break;
+    case SPU_rotmahi:DST = spu_rotmahi(A,I); break;
     /* rotate / shift extras */
     case SPU_rothm:    DST = spu_rothm(A,B); break;
     case SPU_rotqmbi:  DST = spu_rotqmbi(A,B); break;
@@ -380,6 +399,23 @@ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t sto
                 ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;   /* resume at link r0 */
                 continue;
             }
+        }
+        /* The two SPURS kernel services the HLE kernel plants for a policy
+         * module (spu_indirect_branch services them for lifted code). A run
+         * that interprets THROUGH lifted code (spu_interp_run_to) reaches them
+         * here, and executing the placeholder bytes there stopped the PM
+         * (WipEout HD: pm-end halted at 0x9D4). */
+        if (ctx->policy_mode && ctx->pc == SPURS_PM_SELECT_WORKLOAD_LS) {
+            ctx->gpr[3] = spu_splat_u32(0);                    /* keep running */
+            ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
+            continue;
+        }
+        if (ctx->policy_mode && ctx->pc == SPURS_PM_EXIT_TO_KERNEL_LS) {
+            extern volatile unsigned g_spurs_pm_exited;
+            g_spurs_pm_exited = 1;
+            ctx->status = SPU_STATUS_STOPPED_BY_STOP;
+            g_spu_interp_steps = steps;
+            return ctx->stop_code;
         }
         /* Rejoin the compiled fast path only for images that HAVE lifted
          * functions (image_id >= 0). image_id < 0 = pure interpretation: an

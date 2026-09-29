@@ -1881,6 +1881,24 @@ void spu_spurs_taskset_syscall(spu_context* ctx)   /* non-static: also called by
 static int spu_smc_microstep(spu_context* ctx)
 {
     uint32_t pc = ctx->pc & SPU_LS_MASK & ~3u;
+    /* SPU_INTERP_TO_LINK=1: treat code with no lift as a CALL and interpret it,
+     * through lifted code, to the link register it was entered with (see
+     * spu_interp_run_to). WipEout HD's WWS job manager branches into staged job
+     * code with r0 = its resume point; the job calls PM services that ARE
+     * lifted, so the default hand-off rejoined at the first service (0x2F30)
+     * on the wrong host frame and the PM lane ended mid-job. Opt-in: the
+     * default path is tuned for GH3's runtime-generated stubs. */
+    { static int s_tl = -1;
+      if (s_tl < 0) s_tl = getenv("SPU_INTERP_TO_LINK") ? 1 : 0;
+      const uint32_t link = ctx->gpr[0]._u32[0] & SPU_LS_MASK & ~3u;
+      if (s_tl && link && link != pc) {
+          static int _n = 0;
+          if (_n++ < 8)
+              fprintf(stderr, "[spu-smc] img=%d interpreting 0x%05X to link 0x%05X\n",
+                      ctx->image_id, pc, link);
+          spu_interp_run_to(ctx, pc, link);
+          return 1;
+      } }
     for (int steps = 0; steps < 4096; steps++) {
         uint32_t w = ((uint32_t)ctx->ls[pc] << 24) | ((uint32_t)ctx->ls[pc+1] << 16) |
                      ((uint32_t)ctx->ls[pc+2] << 8) | ctx->ls[pc+3];

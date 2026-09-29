@@ -20,6 +20,7 @@ uint32_t spu_rchcnt(spu_context* c, uint32_t ch) { (void)c;(void)ch; return 1; }
 
 /* The rest of the runtime the interpreter reaches: probes off, nothing lifted. */
 int g_spu_ls_watch_n, g_spu_ls_probe, g_wws_read_probe, g_wws_code_probe, g_spu_smc_watch;
+volatile unsigned g_spurs_pm_exited;
 spu_lifted_fn spu_lifted_lookup(const spu_context* c, uint32_t a) { (void)c;(void)a; return 0; }
 void spu_spurs_taskset_syscall(spu_context* c) { (void)c; }
 void spu_ls_watch_slow(uint32_t l, int w, const uint8_t* p, uint32_t pc, uint32_t lr) { (void)l;(void)w;(void)p;(void)pc;(void)lr; }
@@ -79,6 +80,24 @@ int main(void) {
     memcpy(dc.ls, PROG, sizeof PROG);
     spu_interp_run_until(&dc, 0, 4);
     assert(dc.pc == 4 && dc.gpr[2]._u32[0] == 5 && dc.gpr[3]._u32[0] == 0);
+
+    /* --- mpyui (was unimplemented: halted WipEout HD's WWS jobs) and the RR
+     * accumulate form mpyhha (wrote bits 21-27, i.e. r70, instead of rt):
+     *   il $2,6; mpyui $5,$2,-2; ilhu $2,3; ilhu $3,4; il $7,10;
+     *   mpyhha $7,$2,$3; stop */
+    static const unsigned char MP[] = {
+        0x40,0x80,0x03,0x02, 0x75,0xFF,0x81,0x05, 0x41,0x00,0x01,0x82,
+        0x41,0x00,0x02,0x03, 0x40,0x80,0x05,0x07, 0x68,0xC0,0xC1,0x07,
+        0x00,0x00,0x00,0x00,
+    };
+    static spu_context mc;
+    memset(&mc, 0, sizeof mc);
+    spu_context_init(&mc, 0);
+    memcpy(mc.ls, MP, sizeof MP);
+    spu_interp_run(&mc, 0);
+    assert(mc.gpr[5]._u32[0] == 6u * 0xFFFEu);   /* i10 -2 -> 0xFFFE, unsigned */
+    assert(mc.gpr[7]._u32[0] == 10u + 3u * 4u);  /* rt += hi(ra) * hi(rb) */
+    assert(mc.status == SPU_STATUS_STOPPED_BY_STOP);
 
     printf("spu_interp_selftest: PASS\n");
     return 0;
