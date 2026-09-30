@@ -1653,9 +1653,30 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                 (void)polls_before;
 
             {   static int _n = 0;
-                if (_n < 8) { _n++;
+                /* SPURS_KERN_WID=<n>: every dispatch of that one workload (the
+                 * global 8-line budget is spent at boot). */
+                static int s_kw = -2;
+                if (s_kw == -2) { const char* e = getenv("SPURS_KERN_WID"); s_kw = e ? atoi(e) : -1; }
+                static int _kw = 0;
+                if (_n < 8 || ((int)wid == s_kw && (kicked || _kw < 6) && _kw++ < 400)) { _n++;
                     fprintf(stderr, "[spurs-kern] \"%s\" dispatch wid=%u (enabled, state=2) "
-                                    "image=%d ready=%u\n", si->prefix, wid, r->image_id, *rdy);
+                                    "image=%d ready=%u kicked=%d arg=0x%llX\n", si->prefix, wid,
+                                    r->image_id, *rdy, kicked,
+                                    (unsigned long long)vm_read64(ea + SPURS_WKL_INFO1 + wid * SPURS_WKL_INFO_SZ + 8));
+                    if ((int)wid == s_kw) {   /* the workload arg = its job-list header */
+                        u32 jl = (u32)vm_read64(ea + SPURS_WKL_INFO1 + wid * SPURS_WKL_INFO_SZ + 8);
+                        fprintf(stderr, "[spurs-kern]   arg[0..0x40]:");
+                        for (u32 o = 0; o < 0x80; o += 4) fprintf(stderr, " %08X", vm_read32(jl + o));
+                        fputc(10, stderr);
+                        u32 q = vm_read32(jl + 0x3C);   /* WWS: the job queue header */
+                        fprintf(stderr, "[spurs-kern]   queue@0x%08X:", q);
+                        for (u32 o = 0; o < 0x80 && q; o += 4) fprintf(stderr, " %08X", vm_read32(q + o));
+                        fputc(10, stderr);
+                        u32 cl = q ? vm_read32(q + 4) : 0;  /* the list the header points at */
+                        fprintf(stderr, "[spurs-kern]   list@0x%08X:", cl);
+                        for (u32 o = 0; o < 0x80 && cl; o += 4) fprintf(stderr, " %08X", vm_read32(cl + o));
+                        fputc(10, stderr);
+                    }
                     fflush(stderr); } }
 
             /* Live workload arg from the real wklInfo (the game may update it). */

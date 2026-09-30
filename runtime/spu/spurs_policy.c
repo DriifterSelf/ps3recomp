@@ -439,7 +439,9 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
     (void)p;
     extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
     extern void* volatile g_pm_flow_ctx;
-    Sleep(5000);
+    /* SPURS_PM_FLOW_WD_SEC=<n>: when to look (default 5 s after the first
+     * armed run) -- a lane that hangs later than that needs a later look. */
+    { const char* e = getenv("SPURS_PM_FLOW_WD_SEC"); Sleep(e ? (DWORD)atoi(e) * 1000u : 5000u); }
     spu_context* ctx = (spu_context*)g_pm_flow_ctx;
     if (!ctx) { fprintf(stderr, "[pm-flow] watchdog: run returned (no hang)\n"); return 0; }
     unsigned n = g_pm_flow_n; if (n > 8192) n = 8192;

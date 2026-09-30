@@ -1367,6 +1367,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
         extern uint32_t g_barrier_sync_watch;
         static int _post = 0;
         int open = (_pn < 96) || (g_barrier_sync_watch && _post < 256);
+        /* SPURS_PM_DMA_EA=lo-hi (hex): also log every PM transfer into that EA
+         * range, past the boot cap -- one workload's job-list traffic. */
+        { static int s_on = -1; static uint32_t s_lo, s_hi; static int s_n;
+          if (s_on < 0) { const char* e = getenv("SPURS_PM_DMA_EA");
+              s_on = (e && sscanf(e, "%x-%x", &s_lo, &s_hi) == 2) ? 1 : 0; }
+          if (s_on && (uint32_t)ea >= s_lo && (uint32_t)ea < s_hi && s_n++ < 2000) {
+              fprintf(stderr, "[spurs-pm-ea] img=%d cmd=0x%02X lsa=0x%05X ea=0x%08X size=0x%X pc=0x%05X\n",
+                      spu->image_id, cmd, lsa, (uint32_t)ea, size, spu->pc & 0x3FFFF);
+          } }
         if (open) {
             if (_pn >= 96) _post++;
             fprintf(stderr, "[spurs-pm] DMA cmd=0x%02X lsa=0x%05X ea=0x%09llX size=0x%X tag=%u\n",

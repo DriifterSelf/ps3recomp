@@ -113,6 +113,15 @@ static int spu_step(spu_context* ctx) {
                   | ((uint32_t)p[m+2] << 8) | p[m+3];
     spu_ins d; spu_decode1(insn, pc, &d);
     uint32_t next = pc + 4;
+    /* Indirect branches carry the interrupt-enable bits (E = 0x40000, D =
+     * 0x80000), as spu_smc_microstep and the lifted code honour them. The
+     * WWS job manager opens an interrupt window with `bi $r2` (E) and closes
+     * it with `bi $r0` (D); an interpreted irete re-enables. */
+    if (d.op == SPU_bi || d.op == SPU_bisl || d.op == SPU_iret ||
+        d.op == SPU_biz || d.op == SPU_binz || d.op == SPU_bihz || d.op == SPU_bihnz) {
+        if (insn & 0x40000u)      ctx->int_enable = 1;
+        else if (insn & 0x80000u) ctx->int_enable = 0;
+    }
 
     switch (d.op) {
     /* immediates / loads */
@@ -304,7 +313,17 @@ static int spu_step(spu_context* ctx) {
     case SPU_brhnz:if ((PREF(DST) & 0xFFFF) != 0) next = d.tgt; break;
     case SPU_bi:   next = PREF(A) & 0x3FFFC; break;
     case SPU_bisl: DST = spu_link(pc + 4); next = PREF(A) & 0x3FFFC; break;
-    case SPU_iret: next = ctx->srr0 & 0x3FFFC; break;
+    case SPU_iret:
+        next = ctx->srr0 & 0x3FFFC;
+        /* An interpreted handler (the WWS save/restore shim at the top of LS)
+         * restores its own registers before this iret, so the host-side
+         * snapshot spu_indirect_branch would have restored is stale: drop it.
+         * Left armed, the next ORDINARY enabled dispatch at srr0 "restored" it
+         * (WipEout HD: r0 = the old loading-loop address, and the idle job
+         * manager spun in that loop forever). */
+        if (ctx->irq_saved && (next & SPU_LS_MASK) == (ctx->irq_resume_pc & SPU_LS_MASK))
+            ctx->irq_saved = 0;
+        break;
     case SPU_biz:  if (PREF(DST) == 0) next = PREF(A) & 0x3FFFC; break;
     case SPU_binz: if (PREF(DST) != 0) next = PREF(A) & 0x3FFFC; break;
     case SPU_bihz: if ((PREF(DST) & 0xFFFF) == 0) next = PREF(A) & 0x3FFFC; break;
