@@ -775,6 +775,7 @@ static u32 s_sema_offset = 0;   /* NV406E semaphore offset (label window) */
 #define GCM_RECYCLE_MARGIN 0x20000u
 static u32 gcm_ea2io(u32 ea);   /* defined with the wrap callback below */
 static u32 s_fifo_getoff  = 0;
+static u32 s_gcm_park_at   = 0xFFFFFFFFu;  /* the park the walker is waiting at (GCM_PARK_GRACE_MS) */
 static u32 s_last_ring_off = 0;   /* last offset the walker actually consumed */
 static u32 s_fifo_calloff = 0;
 
@@ -1644,20 +1645,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       static int s_grace = -1;
                       if (s_grace < 0) { const char* e = getenv("GCM_PARK_GRACE_MS");
                                          s_grace = e ? atoi(e) : 1000; }
-                      static u32 s_park_at = 0xFFFFFFFFu;
+                      /* s_gcm_park_at: file scope, so stuck-get can defer to it */
                       static unsigned long long s_park_since = 0;
                       extern unsigned long long ps3_ms_now(void);
                       unsigned long long now = ps3_ms_now();
-                      if (s_park_at != s_fifo_getoff) { s_park_at = s_fifo_getoff; s_park_since = now; }
+                      if (s_gcm_park_at != s_fifo_getoff) { s_gcm_park_at = s_fifo_getoff; s_park_since = now; }
                       { static u32 s_told = 0xFFFFFFFFu;
-                        if (now - s_park_since >= 2000 && s_told != s_park_at) {
-                            s_told = s_park_at;
+                        if (now - s_park_since >= 2000 && s_told != s_gcm_park_at) {
+                            s_told = s_gcm_park_at;
                             fprintf(stderr, "[gcm] FIFO parked at 0x%08X for 2s+ (put 0x%08X)\n",
-                                    s_park_at, put); } }
+                                    s_gcm_park_at, put); } }
                       if (s_grace == 0 || now - s_park_since >= (unsigned long long)s_grace) {
                           gcm_fifo_dump_around(s_fifo_getoff);
                           gcm_fifo_resync_why("jump-park", &s_fifo_getoff, put);
-                          s_park_at = 0xFFFFFFFFu;
+                          s_gcm_park_at = 0xFFFFFFFFu;
                       }
                   }
                   break;
@@ -1928,7 +1929,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
       } else burned = 0; }
 
     { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
-      if (s_fifo_getoff == last && s_fifo_getoff != put) {
+      if (s_fifo_getoff == last && s_fifo_getoff != put && s_fifo_getoff != s_gcm_park_at) {  /* a park has its own grace */
           if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                              gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
       } else { stuck = 0; last = s_fifo_getoff; } }
