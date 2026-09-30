@@ -1893,12 +1893,12 @@ static int spu_smc_microstep(spu_context* ctx)
       const uint32_t link = ctx->gpr[0]._u32[0] & SPU_LS_MASK & ~3u;
       if (s_tl && link && link != pc) {
           static int _n = 0;
-          if (_n++ < 8)
+          if (_n++ < 400)
               fprintf(stderr, "[spu-smc] img=%d interpreting 0x%05X to link 0x%05X\n",
                       ctx->image_id, pc, link);
           spu_interp_run_to(ctx, pc, link);
           { extern uint64_t g_spu_interp_steps;
-            if (_n <= 8)
+            if (_n <= 400)
                 fprintf(stderr, "[spu-smc] img=%d   -> ended pc=0x%05X status=0x%X stop=0x%X steps=%llu\n",
                         ctx->image_id, ctx->pc & SPU_LS_MASK, ctx->status, ctx->stop_code,
                         (unsigned long long)g_spu_interp_steps); }

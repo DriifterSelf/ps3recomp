@@ -1658,7 +1658,11 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                 static int s_kw = -2;
                 if (s_kw == -2) { const char* e = getenv("SPURS_KERN_WID"); s_kw = e ? atoi(e) : -1; }
                 static int _kw = 0;
-                if (_n < 8 || ((int)wid == s_kw && (kicked || _kw < 6) && _kw++ < 400)) { _n++;
+                /* only dispatches whose job queue holds work (header word 0) */
+                u32 _jl = (u32)vm_read64(ea + SPURS_WKL_INFO1 + wid * SPURS_WKL_INFO_SZ + 8);
+                /* pending work: level-3 row (+0x70) write index != lane-0 progress */
+                int _busy = _jl && (vm_read32(_jl + 0x70) >> 16) != (vm_read32(_jl + 0x70) & 0xFFFF);
+                if (_n < 8 || ((int)wid == s_kw && (_busy || _kw < 6) && _kw++ < 400)) { _n++;
                     fprintf(stderr, "[spurs-kern] \"%s\" dispatch wid=%u (enabled, state=2) "
                                     "image=%d ready=%u kicked=%d arg=0x%llX\n", si->prefix, wid,
                                     r->image_id, *rdy, kicked,

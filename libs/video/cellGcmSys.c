@@ -1631,8 +1631,35 @@ static void gcm_rsx_process_fifo_unlocked(void)
                    * park standing -- it only patches a park when it reuses that
                    * block. Waiting for a patch that will not come freezes the
                    * FIFO for the rest of the run, so follow the write head. */
-                  if (put != s_fifo_getoff) { gcm_fifo_dump_around(s_fifo_getoff);
-                                              gcm_fifo_resync_why("jump-park", &s_fifo_getoff, put); }
+                  /* ...but not at once. A park can also be patched ASYNCHRONOUSLY
+                   * by another producer: WipEout HD's EdgeGeom SPU jobs build a
+                   * geometry segment and then rewrite the park into a jump to
+                   * it. Following the write head the moment the park was seen
+                   * skipped those segments (and the SET_REFERENCEs in them),
+                   * and the title waited on `ref` forever at race start. Real
+                   * hardware just waits at the park, so wait too, and only
+                   * give up on one that has stood for GCM_PARK_GRACE_MS
+                   * (default 1000; 0 = the old immediate follow). */
+                  if (put != s_fifo_getoff) {
+                      static int s_grace = -1;
+                      if (s_grace < 0) { const char* e = getenv("GCM_PARK_GRACE_MS");
+                                         s_grace = e ? atoi(e) : 1000; }
+                      static u32 s_park_at = 0xFFFFFFFFu;
+                      static unsigned long long s_park_since = 0;
+                      extern unsigned long long ps3_ms_now(void);
+                      unsigned long long now = ps3_ms_now();
+                      if (s_park_at != s_fifo_getoff) { s_park_at = s_fifo_getoff; s_park_since = now; }
+                      { static u32 s_told = 0xFFFFFFFFu;
+                        if (now - s_park_since >= 2000 && s_told != s_park_at) {
+                            s_told = s_park_at;
+                            fprintf(stderr, "[gcm] FIFO parked at 0x%08X for 2s+ (put 0x%08X)\n",
+                                    s_park_at, put); } }
+                      if (s_grace == 0 || now - s_park_since >= (unsigned long long)s_grace) {
+                          gcm_fifo_dump_around(s_fifo_getoff);
+                          gcm_fifo_resync_why("jump-park", &s_fifo_getoff, put);
+                          s_park_at = 0xFFFFFFFFu;
+                      }
+                  }
                   break;
               }
               s_fifo_getoff = tgt; }
