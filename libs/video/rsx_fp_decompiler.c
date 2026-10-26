@@ -903,7 +903,7 @@ static int rsx_fp_decompile_internal(
         case OP_MAX: snprintf(rhs, sizeof(rhs), "max((%s), (%s))", a, b); break;
         case OP_FRC: snprintf(rhs, sizeof(rhs), "frac(%s)", a); break;
         case OP_FLR: snprintf(rhs, sizeof(rhs), "floor(%s)", a); break;
-        case OP_RCP: snprintf(rhs, sizeof(rhs), "(1.0 / (%s).x)", a); break;
+        case OP_RCP: snprintf(rhs, sizeof(rhs), "((%s).x != 0.0 ? 1.0 / (%s).x : 0.0)", a, a); break;
         /* Pack/unpack (RPCS3 FragmentProgramDecompiler PK/UP cases and the pkg/upg
          * builtins): the packed word is a scalar that replicates. */
         case OP_PK4UB: uses_pack = 1; snprintf(rhs, sizeof(rhs), "asfloat(_rsx_pk4ub(%s))", a); break;
@@ -929,7 +929,7 @@ static int rsx_fp_decompile_internal(
         case OP_COS: snprintf(rhs, sizeof(rhs), "cos((%s).x)", a); break;
         case OP_SIN: snprintf(rhs, sizeof(rhs), "sin((%s).x)", a); break;
         case OP_POW: snprintf(rhs, sizeof(rhs), "pow((%s).x, (%s).x)", a, b); break;
-        case OP_DIV: snprintf(rhs, sizeof(rhs), "(%s) / (%s).x", a, b); break;
+        case OP_DIV: snprintf(rhs, sizeof(rhs), "((%s).x != 0.0 ? (%s) / (%s).x : (float4)0.0)", b, a, b); break;
         /* Real RSX DIVSQ shares RSQ's sign-ignoring sqrt on the denominator
          * (oracle: RPCS3 FragmentProgramDecompiler.cpp's _builtin_sqrt macro,
          * reused by _builtin_divsq) AND forces the result to exactly 0,
@@ -1272,7 +1272,7 @@ static int rsx_fp_decompile_internal(
             "#ifdef RSX_FRAGCOORD_W_IS_RCP\n"
             "#define _rsx_inv_w(p) ((p).w)\n"
             "#else\n"
-            "#define _rsx_inv_w(p) (1.0 / (p).w)\n"
+            "#define _rsx_inv_w(p) ((p).w != 0.0 ? (1.0 / (p).w) : 0.0)\n"
             "#endif\n");
     /* Texture bank. With no cube units (the default) emit the exact legacy
      * array declaration so 2D-only programs are byte-identical. When any unit
