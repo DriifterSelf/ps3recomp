@@ -2,6 +2,7 @@
  * ps3recomp - RSX guest vertex fetch (see rsx_vertex_fetch.h)
  */
 #include "rsx_vertex_fetch.h"
+#include "rsx_vertex_formats.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,8 +41,9 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
     const rsx_vertex_attrib* a = &st->vertex_attribs[idx];
     if (!a->enabled || a->stride == 0 || !vm_base) return;
 
-    /* Vertex frequency divisor (instancing). freq 0/1 = per-vertex. For
-     * freq > 1 the element index is either vertex/freq (DIVIDE: per-instance
+    /* Vertex frequency divisor (instancing). An ordinary array
+     * (rsx_vertex_freq_plain: freq 0, or 1 with DIVIDE) is per-vertex.
+     * Otherwise the element index is either vertex/freq (DIVIDE: per-instance
      * data advances once per freq verts) or vertex%freq (MODULO: a mesh
      * repeats every freq verts). NV4097_SET_FREQUENCY_DIVIDER_OPERATION's
      * per-attribute bit selects MODULO. DeferredShading's cube rings need
@@ -50,7 +52,8 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
      * instanced cubes drew with garbage transforms (only the baseplate,
      * which isn't instanced, survived). */
     u32 ei = vi;
-    if (a->frequency > 1) {
+    if (!rsx_vertex_freq_plain(a->frequency,
+                               (st->frequency_divider_op >> idx) & 1u)) {
         static int nofreq = -1;                 /* VP_NOFREQ: instancing kill-switch */
         if (nofreq < 0) nofreq = getenv("VP_NOFREQ") ? 1 : 0;
         if (!nofreq)
@@ -94,20 +97,22 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
         for (u32 k = 0; k < n; k++)
             out[k] = (float)(s16)((p[k*2] << 8) | p[k*2+1]);
         break;
-    case 6: /* CMP: 11-11-10 signed normalized */
+    case 6: /* CMP: one big-endian word, x and y signed 11 bits, z signed 10,
+             * normalized. It fell to the float default, so a mesh with
+             * compressed normals was lit from garbage. Same decode as
+             * rsx_vertex_compact.c and rsx_live_draw.c. */
         {
-            u32 w = ((u32)p[0] << 24) | ((u32)p[1] << 16) |
-                    ((u32)p[2] << 8) | (u32)p[3];
-            s32 sx = (s32)(w << 21) >> 21;
-            s32 sy = (s32)(w << 10) >> 21;
-            s32 sz = (s32)(w) >> 22;
-            out[0] = (float)sx / 1023.0f;
-            out[1] = (float)sy / 1023.0f;
-            out[2] = (float)sz / 511.0f;
-            if (out[0] < -1.0f) out[0] = -1.0f;
-            if (out[1] < -1.0f) out[1] = -1.0f;
-            if (out[2] < -1.0f) out[2] = -1.0f;
-            n = 3;
+            const u32 w = ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3];
+            s32 x = (s32)(w & 0x7FF);          if (x & 0x400) x -= 0x800;
+            s32 y = (s32)((w >> 11) & 0x7FF); if (y & 0x400) y -= 0x800;
+            s32 z = (s32)((w >> 22) & 0x3FF); if (z & 0x200) z -= 0x400;
+            out[0] = (float)x / 1023.0f;
+            out[1] = (float)y / 1023.0f;
+            out[2] = (float)z / 511.0f;
+            out[3] = 1.0f;
+            n = 4;
+        }
+        break;
         }
         break;
     case 7: /* UB256: u8 unnormalized */
