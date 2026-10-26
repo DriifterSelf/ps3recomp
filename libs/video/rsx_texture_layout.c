@@ -300,16 +300,71 @@ void rsx_texture_decode(void* dst, u32 dst_pitch,
         return;
     }
 
+    /* Fast path for 32-bit colour (A8R8G8B8 / D8R8G8B8): converts guest ARGB to host RGBA
+     * using a single 32-bit rotate without per-texel function call overhead. */
+    if (tl->fmt == RSX_TEXFMT_R8G8B8A8 && (tl->base_format == 0x85 || tl->base_format == 0x9E)) {
+        const u32 alpha_or = (tl->base_format == 0x9E) ? 0xFF000000u : 0u;
+        if (tl->swizzled) {
+            const u32 xmask = rsx_swizzle_offset((1u << l2w) - 1u, 0, l2w, l2h);
+            for (u32 y = 0; y < h; y++) {
+                u32* drow = (u32*)(d + (size_t)y * dst_pitch);
+                const u32 yoff = rsx_swizzle_offset(0, y, l2w, l2h);
+                u32 xoff = 0;
+                if (!argb_as_rgba) {
+                    for (u32 x = 0; x < w; x++) {
+                        u32 v = *(const u32*)(src + (size_t)(xoff | yoff) * 4);
+                        drow[x] = ((v >> 8) | (v << 24)) | alpha_or;
+                        xoff = (xoff - xmask) & xmask;
+                    }
+                } else {
+                    for (u32 x = 0; x < w; x++) {
+                        u32 v = *(const u32*)(src + (size_t)(xoff | yoff) * 4);
+                        drow[x] = v | alpha_or;
+                        xoff = (xoff - xmask) & xmask;
+                    }
+                }
+            }
+            return;
+        } else {
+            for (u32 y = 0; y < h; y++) {
+                u32* drow = (u32*)(d + (size_t)y * dst_pitch);
+                const u32* srow = (const u32*)(src + (size_t)y * tl->row_bytes);
+                if (!argb_as_rgba) {
+                    for (u32 x = 0; x < w; x++) {
+                        u32 v = srow[x];
+                        drow[x] = ((v >> 8) | (v << 24)) | alpha_or;
+                    }
+                } else {
+                    for (u32 x = 0; x < w; x++) {
+                        drow[x] = srow[x] | alpha_or;
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     /* Morton order interleaves the low bits of x and y, so a swizzled image
      * has to be walked texel by texel; so does anything the host cannot take
-     * as stored. */
+     * as stored. x's and y's bits land on separate positions of the swizzled
+     * offset, so it is the OR of a y part, computed once a row, and an x part
+     * stepped with the dilated increment (d - mask) & mask. Interleaving every
+     * texel's bits afresh was most of the decode in texture bursts. */
+    const u32 xmask = tl->swizzled ? rsx_swizzle_offset((1u << l2w) - 1u, 0, l2w, l2h) : 0;
     for (u32 y = 0; y < h; y++) {
         u8* drow = d + (size_t)y * dst_pitch;
-        for (u32 x = 0; x < w; x++) {
-            const u8* s = tl->swizzled
-                ? src + (size_t)rsx_swizzle_offset(x, y, l2w, l2h) * sbpp
-                : src + (size_t)y * tl->row_bytes + (size_t)x * sbpp;
-            decode_texel(tl, s, drow + (size_t)x * dbpp, argb_as_rgba);
+        if (tl->swizzled) {
+            const u32 yoff = rsx_swizzle_offset(0, y, l2w, l2h);
+            u32 xoff = 0;
+            for (u32 x = 0; x < w; x++) {
+                decode_texel(tl, src + (size_t)(xoff | yoff) * sbpp,
+                             drow + (size_t)x * dbpp, argb_as_rgba);
+                xoff = (xoff - xmask) & xmask;
+            }
+        } else {
+            const u8* srow = src + (size_t)y * tl->row_bytes;
+            for (u32 x = 0; x < w; x++)
+                decode_texel(tl, srow + (size_t)x * sbpp, drow + (size_t)x * dbpp, argb_as_rgba);
         }
     }
 }
