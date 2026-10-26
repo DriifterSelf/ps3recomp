@@ -136,7 +136,6 @@ typedef struct {
     u32 rt_fmt;         /* RSX surface colour format (SET_SURFACE_FORMAT [4:0]) */
     u32 zeta_off;       /* depth surface (SET_SURFACE_ZETA_OFFSET) when the surface has one */
     int no_color;       /* colour target NONE with a depth surface: a depth-only pass */
-    int tex_ds[4];      /* pre-pass: OffDS read through unit u (its colour copy is tex_rt), -1 = none */
     /* Guest viewport rect at draw time (target pixels). Sub-viewport layouts
      * (wave's debug tiles) position quads with this, not with constants --
      * forcing full-target viewports drew every tile window-sized. */
@@ -254,7 +253,7 @@ typedef struct {
                              * and a 2D variant of the same program are different
                              * pipelines and must not share a cache entry. */
     u32 unnorm_mask;        /* unnormalized textures mask (PSO key) */
-    u32 unnorm_dim[16][2];  /* unnormalized dimensions for scaling */
+    u32 unnorm_dim[16][3];  /* unnormalized dimensions for scaling */
     u64 zs;                 /* depth/stencil state, rsx_zs_key (PSO key) */
     ID3D12PipelineState* pso;
 } VPFPEntry;
@@ -2313,23 +2312,24 @@ static u32 dr_cube_mask(const D3D12DrawRecord* dr)
 }
 
 /* Which of a draw's texture units use unnormalized coordinates, with dimensions. */
-static u32 dr_unnorm_units(const D3D12DrawRecord* dr, u32 dim[16][2])
+static u32 dr_unnorm_units(const D3D12DrawRecord* dr, u32 dim[16][3])
 {
     u32 mask = 0;
     for (int u = 0; u < 16; u++) {
-        dim[u][0] = dim[u][1] = 0;
+        dim[u][0] = dim[u][1] = dim[u][2] = 0;
         if (!dr->tex[u].set || !(dr->tex[u].fmt & 0x40) || !dr->tex[u].w || !dr->tex[u].h)
             continue;
         mask |= 1u << u;
         dim[u][0] = dr->tex[u].w;
         dim[u][1] = dr->tex[u].h;
+        dim[u][2] = 1;
     }
     return mask;
 }
 
 static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, int nrt,
                                           DXGI_FORMAT rtfmt, u32 ctrl, u32 cmask, u32 cull,
-                                          u32 cube_mask, u32 unnorm_mask, const u32 unnorm_dim[16][2], u64 zs)
+                                          u32 cube_mask, u32 unnorm_mask, const u32 unnorm_dim[16][3], u64 zs)
 {
     if (nrt < 0) nrt = 0; if (nrt > 4) nrt = 4;   /* 0: a depth-only pass */
     if (rtfmt == 0) rtfmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -2458,7 +2458,7 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
     int n = rsx_fp_decompile_ex(vm_base + off, 4096, fp_ctrl, cube_mask, hlsl, sizeof(hlsl));
     if (n <= 0) { static int _e=0; if(PS3_LOG_FIRST(_e, 16)) printf("[FP] decompile fail (fp=0x%08X)\n", fp_addr); return NULL; }
     if (unnorm_mask) {
-        rsx_fp_apply_unnorm_scale(hlsl, sizeof(hlsl), unnorm_mask, (const u32 (*)[2])unnorm_dim, cube_mask);
+        rsx_fp_apply_unnorm_scale(hlsl, sizeof(hlsl), unnorm_mask, (const u32 (*)[3])unnorm_dim, cube_mask, 0);
     }
     /* FP_LIST=1: every program the title actually compiles, with its size. A
      * fragment program that hangs the GPU shows up here as an implausible
@@ -3016,11 +3016,7 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
                 off = alt;
             }
         } } }
-    /* A stale cache entry (slot >= 0) re-uses its own slot; otherwise take an
-     * empty slot (preferred) or an unused one. Preferring empty slots prevents
-     * evicting cached textures from earlier frames. */
-    int freeslot = (emptyslot >= 0) ? emptyslot : unusedslot;
-    if (slot < 0 && freeslot < 0) return -1;      /* out of slots this frame */
+
     /* TEX_SRCDBG=<N>: is the guest memory this slot uploads FROM actually
      * populated? An empty source and a broken sampler both render flat. */
     { static int cap = -1, n = 0;
@@ -4962,7 +4958,7 @@ static void render_frame(void)
         }
         if (perf_on()) s_perf_srv += perf_now() - _sv0;
         double _ps0 = perf_on() ? perf_now() : 0.0;
-        u32 unnorm_dim[16][2];
+        u32 unnorm_dim[16][3];
         u32 unnorm_mask = dr_unnorm_units(dr, unnorm_dim);
         if (dr->fp_addr) vp_get_fp_pso(dr->vs_idx, dr->fp_addr, dr->blend_key,
                                        dr_num_rts(dr),
@@ -5345,7 +5341,7 @@ static void render_frame(void)
                 }
                 /* Per-draw pipeline: prefer the guest's own compiled FP; fall
                  * back to the hardcoded atlas/colour PS pair. */
-                u32 unnorm_dim[16][2];
+                u32 unnorm_dim[16][3];
                 u32 unnorm_mask = dr_unnorm_units(dr, unnorm_dim);
                 ID3D12PipelineState* dpso =
                     dr->fp_addr ? vp_get_fp_pso(dr->vs_idx, dr->fp_addr, dr->blend_key,

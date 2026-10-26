@@ -113,8 +113,6 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
             n = 4;
         }
         break;
-        }
-        break;
     case 7: /* UB256: u8 unnormalized */
         for (u32 k = 0; k < n; k++) out[k] = (float)p[k];
         break;
